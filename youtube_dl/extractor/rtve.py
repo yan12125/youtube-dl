@@ -10,99 +10,71 @@ from ..compat import compat_urlparse
 from ..utils import (
     float_or_none,
     remove_end,
-    struct_unpack,
+    struct_pack,
+    ExtractorError,
 )
+from Crypto.Cipher import Blowfish
 
 
-def _decrypt_url(png):
-    encrypted_data = base64.b64decode(png)
-    text_index = encrypted_data.find(b'tEXt')
-    text_chunk = encrypted_data[text_index - 4:]
-    length = struct_unpack('!I', text_chunk[:4])[0]
-    # Use bytearray to get integers when iterating in both python 2.x and 3.x
-    data = bytearray(text_chunk[8:8 + length])
-    data = [chr(b) for b in data if b != 0]
-    hash_index = data.index('#')
-    alphabet_data = data[:hash_index]
-    url_data = data[hash_index + 1:]
+class RTVECipher(object):
+    bs = Blowfish.block_size
+    key = b'yeL&daD3'
+    cipher = Blowfish.new(key, Blowfish.MODE_ECB)
 
-    alphabet = []
-    e = 0
-    d = 0
-    for l in alphabet_data:
-        if d == 0:
-            alphabet.append(l)
-            d = e = (e + 1) % 4
-        else:
-            d -= 1
-    url = ''
-    f = 0
-    e = 3
-    b = 1
-    for letter in url_data:
-        if f == 0:
-            l = int(letter) * 10
-            f = 1
-        else:
-            if e == 0:
-                l += int(letter)
-                url += alphabet[l]
-                e = (b + 3) % 4
-                f = 0
-                b += 1
-            else:
-                e -= 1
+    @classmethod
+    def encrypt(cls, plaintexts, clean_url=False):
+        plainbytes = plaintexts.encode('utf-8')
+        plen = cls.bs - len(plainbytes) % cls.bs
+        padding = [plen] * plen
+        padding = struct_pack('b' * plen, *padding)
+        cipherbytes = cls.cipher.encrypt(plainbytes + padding)
+        ret = base64.b64encode(cipherbytes).decode('utf-8')
+        if clean_url:
+            ret = ret.replace('/', '_').replace('+', '-')
+        return ret
 
-    return url
+    @classmethod
+    def decrypt(cls, ciphertexts):
+        cipherbytes = base64.b64decode(ciphertexts.encode('utf-8'))
+        original = cls.cipher.decrypt(cipherbytes).decode('utf-8')
+        return original[:-ord(original[-1])]
 
 
-class RTVEALaCartaIE(InfoExtractor):
-    IE_NAME = 'rtve.es:alacarta'
-    IE_DESC = 'RTVE a la carta'
-    _VALID_URL = r'http://www\.rtve\.es/(m/)?alacarta/videos/[^/]+/[^/]+/(?P<id>\d+)'
-
-    _TESTS = [{
-        'url': 'http://www.rtve.es/alacarta/videos/balonmano/o-swiss-cup-masculina-final-espana-suecia/2491869/',
-        'md5': '1d49b7e1ca7a7502c56a4bf1b60f1b43',
-        'info_dict': {
-            'id': '2491869',
-            'ext': 'mp4',
-            'title': 'Balonmano - Swiss Cup masculina. Final: España-Suecia',
-            'duration': 5024.566,
-        },
-    }, {
-        'note': 'Live stream',
-        'url': 'http://www.rtve.es/alacarta/videos/television/24h-live/1694255/',
-        'info_dict': {
-            'id': '1694255',
-            'ext': 'flv',
-            'title': 'TODO',
-        },
-        'skip': 'The f4m manifest can\'t be used yet',
-    }, {
-        'url': 'http://www.rtve.es/m/alacarta/videos/cuentame-como-paso/cuentame-como-paso-t16-ultimo-minuto-nuestra-vida-capitulo-276/2969138/?media=tve',
-        'only_matching': True,
-    }]
-
+class RTVEBaseIE(InfoExtractor):
     def _real_extract(self, url):
         mobj = re.match(self._VALID_URL, url)
         video_id = mobj.group('id')
         info = self._download_json(
             'http://www.rtve.es/api/videos/%s/config/alacarta_videos.json' % video_id,
             video_id)['page']['items'][0]
-        png_url = 'http://www.rtve.es/ztnr/movil/thumbnail/default/videos/%s.png' % video_id
-        png = self._download_webpage(png_url, video_id, 'Downloading url information')
-        video_url = _decrypt_url(png)
-        if not video_url.endswith('.f4m'):
+
+        ztnr_res = self._download_xml(
+            'http://ztnr.rtve.es/ztnr/res/' + RTVECipher.encrypt(video_id + '_banebdyede_video_es', clean_url=True),
+            video_id, transform_source=lambda s: RTVECipher.decrypt(s).replace('&', '&amp;'))
+
+        response_code = ztnr_res.find('./preset/response').attrib['code']
+        if response_code != 'ok':
+            raise ExtractorError(response_code, expected=True)
+
+        for url_element in ztnr_res.findall('./preset/response/url'):
+            video_url = url_element.text
+
+            if video_url.endswith('.f4m'):
+                break
+
             auth_url = video_url.replace(
                 'resources/', 'auth/resources/'
             ).replace('.net.rtve', '.multimedia.cdn.rtve')
-            video_path = self._download_webpage(
-                auth_url, video_id, 'Getting video url')
-            # Use mvod1.akcdn instead of flash.akamaihd.multimedia.cdn to get
-            # the right Content-Length header and the mp4 format
-            video_url = compat_urlparse.urljoin(
-                'http://mvod1.akcdn.rtve.es/', video_path)
+            try:
+                video_path = self._download_webpage(
+                    auth_url, video_id, 'Getting video url')
+                # Use mvod1.akcdn instead of flash.akamaihd.multimedia.cdn to get
+                # the right Content-Length header and the mp4 format
+                video_url = compat_urlparse.urljoin(
+                    'http://mvod1.akcdn.rtve.es/', video_path)
+                break
+            except ExtractorError:
+                continue
 
         subtitles = None
         if info.get('sbtFile') is not None:
@@ -127,62 +99,68 @@ class RTVEALaCartaIE(InfoExtractor):
             for s in subs)
 
 
-class RTVEInfantilIE(InfoExtractor):
+class RTVEALaCartaIE(RTVEBaseIE):
+    IE_NAME = 'rtve.es:alacarta'
+    IE_DESC = 'RTVE a la carta'
+    _VALID_URL = r'http://www\.rtve\.es/(m/)?alacarta/videos/[^/]+/[^/]+/(?P<id>\d+)'
+
+    _TESTS = [{
+        'url': 'http://www.rtve.es/alacarta/videos/balonmano/o-swiss-cup-masculina-final-espana-suecia/2491869/',
+        'md5': '9c8cfbc423548372ebad6d6b4680459c',
+        'info_dict': {
+            'id': '2491869',
+            'ext': 'mp4',
+            'title': 'Balonmano - Swiss Cup masculina. Final: España-Suecia',
+            'duration': 5024.566,
+        },
+    }, {
+        'url': 'http://www.rtve.es/alacarta/videos/ciudad-k/ciudad-20100927-2131/888631/',
+        'md5': '01db3d5de2e3c0e1518454753c428922',
+        'info_dict': {
+            'id': '888631',
+            'ext': 'flv',
+            'title': 'Ciudad K - Capítulo 3',
+            'duration': 1561.68,
+        }
+    }, {
+        'note': 'Live stream',
+        'url': 'http://www.rtve.es/alacarta/videos/television/24h-live/1694255/',
+        'info_dict': {
+            'id': '1694255',
+            'ext': 'flv',
+            'title': 'TODO',
+        },
+        'skip': 'The f4m manifest can\'t be used yet',
+    }, {
+        'url': 'http://www.rtve.es/m/alacarta/videos/cuentame-como-paso/cuentame-como-paso-t16-ultimo-minuto-nuestra-vida-capitulo-276/2969138/?media=tve',
+        'only_matching': True,
+    }]
+
+
+class RTVEInfantilIE(RTVEBaseIE):
     IE_NAME = 'rtve.es:infantil'
     IE_DESC = 'RTVE infantil'
     _VALID_URL = r'https?://(?:www\.)?rtve\.es/infantil/serie/(?P<show>[^/]*)/video/(?P<short_title>[^/]*)/(?P<id>[0-9]+)/'
-
-    _TESTS = [{
-        'url': 'http://www.rtve.es/infantil/serie/cleo/video/maneras-vivir/3040283/',
-        'md5': '915319587b33720b8e0357caaa6617e6',
-        'info_dict': {
-            'id': '3040283',
-            'ext': 'mp4',
-            'title': 'Maneras de vivir',
-            'thumbnail': 'http://www.rtve.es/resources/jpg/6/5/1426182947956.JPG',
-            'duration': 357.958,
-        },
-    }]
-
-    def _real_extract(self, url):
-        video_id = self._match_id(url)
-        info = self._download_json(
-            'http://www.rtve.es/api/videos/%s/config/alacarta_videos.json' % video_id,
-            video_id)['page']['items'][0]
-
-        webpage = self._download_webpage(url, video_id)
-        vidplayer_id = self._search_regex(
-            r' id="vidplayer([0-9]+)"', webpage, 'internal video ID')
-
-        png_url = 'http://www.rtve.es/ztnr/movil/thumbnail/default/videos/%s.png' % vidplayer_id
-        png = self._download_webpage(png_url, video_id, 'Downloading url information')
-        video_url = _decrypt_url(png)
-
-        return {
-            'id': video_id,
-            'ext': 'mp4',
-            'title': info['title'],
-            'url': video_url,
-            'thumbnail': info.get('image'),
-            'duration': float_or_none(info.get('duration'), scale=1000),
-        }
 
 
 class RTVELiveIE(InfoExtractor):
     IE_NAME = 'rtve.es:live'
     IE_DESC = 'RTVE.es live streams'
-    _VALID_URL = r'http://www\.rtve\.es/(?:deportes/directo|noticias|television)/(?P<id>[a-zA-Z0-9-]+)'
+    _VALID_URL = r'http://www\.rtve\.es/(?:deportes/directo|directo|noticias|television)/(?P<id>[a-zA-Z0-9-]+)'
 
     _TESTS = [{
         'url': 'http://www.rtve.es/noticias/directo-la-1/',
         'info_dict': {
             'id': 'directo-la-1',
             'ext': 'flv',
-            'title': 're:^La 1 de TVE [0-9]{4}-[0-9]{2}-[0-9]{2}Z[0-9]{6}$',
+            'title': 're:^Estoy viendo La 1 en directo en RTVE.es [0-9]{4}-[0-9]{2}-[0-9]{2}Z[0-9]{6}$',
         },
         'params': {
             'skip_download': 'live stream',
         }
+    }, {
+        'url': 'http://www.rtve.es/directo/la-2/',
+        'only_matching': True,
     }]
 
     def _real_extract(self, url):
@@ -196,18 +174,20 @@ class RTVELiveIE(InfoExtractor):
         title = remove_end(self._og_search_title(webpage), ' en directo')
         title += ' ' + time.strftime('%Y-%m-%dZ%H%M%S', start_time)
 
-        vidplayer_id = self._search_regex(
-            r' id="vidplayer([0-9]+)"', webpage, 'internal video ID')
-        png_url = 'http://www.rtve.es/ztnr/movil/thumbnail/default/videos/%s.png' % vidplayer_id
-        png = self._download_webpage(png_url, video_id, 'Downloading url information')
-        video_url = _decrypt_url(png)
+        internal_video_id = self._search_regex(
+            r'assetID=(\d+)[^\&]+\&', webpage, 'internal video ID')
+
+        ztnr_res = self._download_xml(
+            'http://ztnr.rtve.es/ztnr/res/' + RTVECipher.encrypt(internal_video_id + '_banebdyede_video_es', clean_url=True),
+            video_id, transform_source=lambda s: RTVECipher.decrypt(s).replace('&', '&amp;'))
+        video_url = ztnr_res.find('./preset/response/url').text
 
         return {
             'id': video_id,
             'ext': 'flv',
             'title': title,
             'url': video_url,
-            'app': 'rtve-live-live?ovpfv=2.1.2',
+            'app': 'live?ovpfv=2.1.2',
             'player_url': player_url,
             'rtmp_live': True,
         }
