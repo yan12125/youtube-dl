@@ -6,28 +6,29 @@ import re
 import time
 
 from .common import InfoExtractor
-from ..compat import compat_urlparse
 from ..utils import (
     float_or_none,
     remove_end,
-    struct_pack,
-    ExtractorError,
+    add_pkcs7_padding,
+    strip_pkcs7_padding,
+    bytes_to_intlist,
+    intlist_to_bytes,
 )
-from Crypto.Cipher import Blowfish
+from ..aes import (
+    aes_cbc_encrypt,
+    aes_cbc_decrypt,
+    BLOCK_SIZE_BYTES
+)
 
 
 class RTVECipher(object):
-    bs = Blowfish.block_size
-    key = b'yeL&daD3'
-    cipher = Blowfish.new(key, Blowfish.MODE_ECB)
+    key = bytes_to_intlist(b'fgslFTdlghf89857jgfskgf23H330fsd')
+    iv = [0] * 16
 
     @classmethod
     def encrypt(cls, plaintexts, clean_url=False):
-        plainbytes = plaintexts.encode('utf-8')
-        plen = cls.bs - len(plainbytes) % cls.bs
-        padding = [plen] * plen
-        padding = struct_pack('b' * plen, *padding)
-        cipherbytes = cls.cipher.encrypt(plainbytes + padding)
+        plaindata = bytes_to_intlist(plaintexts.encode('utf-8'))
+        cipherbytes = intlist_to_bytes(aes_cbc_encrypt(add_pkcs7_padding(plaindata, BLOCK_SIZE_BYTES), cls.key, cls.iv))
         ret = base64.b64encode(cipherbytes).decode('utf-8')
         if clean_url:
             ret = ret.replace('/', '_').replace('+', '-')
@@ -35,9 +36,8 @@ class RTVECipher(object):
 
     @classmethod
     def decrypt(cls, ciphertexts):
-        cipherbytes = base64.b64decode(ciphertexts.encode('utf-8'))
-        original = cls.cipher.decrypt(cipherbytes).decode('utf-8')
-        return original[:-ord(original[-1])]
+        cipherdata = bytes_to_intlist(base64.b64decode(ciphertexts.encode('utf-8')))
+        return strip_pkcs7_padding(intlist_to_bytes(aes_cbc_decrypt(cipherdata, cls.key, cls.iv)).decode('utf-8'))
 
 
 class RTVEBaseIE(InfoExtractor):
@@ -48,33 +48,7 @@ class RTVEBaseIE(InfoExtractor):
             'http://www.rtve.es/api/videos/%s/config/alacarta_videos.json' % video_id,
             video_id)['page']['items'][0]
 
-        ztnr_res = self._download_xml(
-            'http://ztnr.rtve.es/ztnr/res/' + RTVECipher.encrypt(video_id + '_banebdyede_video_es', clean_url=True),
-            video_id, transform_source=lambda s: RTVECipher.decrypt(s).replace('&', '&amp;'))
-
-        response_code = ztnr_res.find('./preset/response').attrib['code']
-        if response_code != 'ok':
-            raise ExtractorError(response_code, expected=True)
-
-        for url_element in ztnr_res.findall('./preset/response/url'):
-            video_url = url_element.text
-
-            if video_url.endswith('.f4m'):
-                break
-
-            auth_url = video_url.replace(
-                'resources/', 'auth/resources/'
-            ).replace('.net.rtve', '.multimedia.cdn.rtve')
-            try:
-                video_path = self._download_webpage(
-                    auth_url, video_id, 'Getting video url')
-                # Use mvod1.akcdn instead of flash.akamaihd.multimedia.cdn to get
-                # the right Content-Length header and the mp4 format
-                video_url = compat_urlparse.urljoin(
-                    'http://mvod1.akcdn.rtve.es/', video_path)
-                break
-            except ExtractorError:
-                continue
+        video_url = 'http://www.rtve.es/ztnr/consumer/tablet/video/alta/' + RTVECipher.encrypt(video_id + '_es_1428059760000', clean_url=True)
 
         subtitles = None
         if info.get('sbtFile') is not None:

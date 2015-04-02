@@ -1811,3 +1811,13 @@ class PerRequestProxyHandler(compat_urllib_request.ProxyHandler):
             return None  # No Proxy
         return compat_urllib_request.ProxyHandler.proxy_open(
             self, req, proxy, type)
+
+
+def add_pkcs7_padding(data, block_size):
+    plen = block_size - len(data) % block_size
+    padding = [plen] * plen
+    return data + padding
+
+
+def strip_pkcs7_padding(data):
+    return data[:-data[-1]]
