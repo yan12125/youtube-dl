@@ -5,8 +5,12 @@ import os.path
 import sys
 import re
 
+if len(sys.argv) != 2:
+    print('Usage: prepare_manpage.py [OUTPUT_FILENAME]')
+
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 README_FILE = os.path.join(ROOT_DIR, 'README.md')
+output_filename = sys.argv[1]
 
 
 def filter_options(readme):
@@ -57,7 +61,5 @@ readme = PREFIX + readme
 
 readme = filter_options(readme)
 
-if sys.version_info < (3, 0):
-    print(readme.encode('utf-8'))
-else:
-    print(readme)
+with io.open(output_filename, 'w', encoding='utf-8') as f:
+    f.write(readme)
