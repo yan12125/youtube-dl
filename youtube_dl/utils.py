@@ -709,6 +709,29 @@ def _create_http_connection(ydl_handler, http_class, is_https, *args, **kwargs):
                     self.sock = sock
             hc.connect = functools.partial(_hc_connect, hc)
 
+    dns_servers = ydl_handler._params.get('dns_servers')
+    if dns_servers is not None:
+        if not hasattr(hc, '_create_connection'):
+            raise Exception('Custom DNS server are not currently supported')
+
+        try:
+            import dns.resolver
+        except ImportError:
+            raise Exception('dnspython required for custom DNS servers')
+
+        def _create_connection_wrapper(address, *args, **kwargs):
+            host, port = address
+
+            custom_resolver = dns.resolver.Resolver()
+            custom_resolver.nameservers = dns_servers.split(',')
+
+            answer = custom_resolver.query(host, 'A')
+            resolved_ip = answer.rrset.items[0].to_text()
+
+            return socket.create_connection((resolved_ip, port))
+
+        hc._create_connection = _create_connection_wrapper
+
     return hc
 
 

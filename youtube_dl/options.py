@@ -214,6 +214,11 @@ def parseOpts(overrideArguments=None):
         help='Use this proxy to verify the IP address for some Chinese sites. '
         'The default proxy specified by --proxy (or none, if the options is not present) is used for the actual downloading. (experimental)'
     )
+    network.add_option(
+        '--dns-servers',
+        dest='dns_servers', default=None, metavar='DNS_SERVERS',
+        help='Use custom DNS servers'
+    )
 
     selection = optparse.OptionGroup(parser, 'Video Selection')
     selection.add_option(
