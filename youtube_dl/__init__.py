@@ -381,6 +381,8 @@ def _real_main(argv=None):
         'external_downloader_args': external_downloader_args,
         'postprocessor_args': postprocessor_args,
         'cn_verification_proxy': opts.cn_verification_proxy,
+        # TODO: PACs fed from local files
+        'pac_url': opts.pac_url,
     }
 
     with YoutubeDL(ydl_opts) as ydl:

@@ -34,6 +34,12 @@ import traceback
 import xml.etree.ElementTree
 import zlib
 
+try:
+    import pacparser
+    PACPARSER_AVAILABLE = True
+except ImportError:
+    PACPARSER_AVAILABLE = False
+
 from .compat import (
     compat_HTMLParser,
     compat_basestring,
@@ -2675,7 +2681,19 @@ class ISO3166Utils(object):
 
 
 class PerRequestProxyHandler(compat_urllib_request.ProxyHandler):
-    def __init__(self, proxies=None):
+    def __init__(self, proxies=None, pac_data=None):
+        if proxies and pac_data:
+            raise ValueError('proxies and pac_data can\'t be used together')
+
+        self.uses_pac = False
+        if pac_data is not None:
+            if not PACPARSER_AVAILABLE:
+                raise OSError('PAC data provided but pacparser unavailable')
+
+            pacparser.init()
+            pacparser.parse_pac_string(pac_data)
+            self.uses_pac = True
+
         # Set default handlers
         for type in ('http', 'https'):
             setattr(self, '%s_open' % type,
@@ -2683,7 +2701,46 @@ class PerRequestProxyHandler(compat_urllib_request.ProxyHandler):
                         meth(r, proxy, type))
         return compat_urllib_request.ProxyHandler.__init__(self, proxies)
 
+    @staticmethod
+    def _parse_pac_result(proxy_directives):
+        # Reference: nsProtocolProxyService::ExtractProxyInfo()
+        # From mozilla-central/netwerk/base/nsProtocolProxyService.cpp
+        # TODO: Add tests
+
+        # TODO: Fallback to other proxies if the first one fails
+        proxy_directive = proxy_directives.split(';')[0]
+        if proxy_directive.upper() == 'DIRECT':
+            return '__noproxy__'
+
+        proxy_type, proxy_host = proxy_directive.split(' ')
+        proxy_type = proxy_type.upper()
+        if proxy_type in ('SOCKS', 'SOCKS4', 'SOCKS5'):
+            raise NotImplementedError(
+                'Socks proxy are not implemented yet. '
+                'See https://github.com/rg3/youtube-dl/issues/402.')
+        elif proxy_type in ('HTTP', 'HTTPS', 'PROXY'):
+            proxy = proxy_host
+            # Put the port if missing
+            default_port = 443 if proxy_type == 'HTTPS' else 80
+            url_components = compat_urlparse.urlparse(proxy_host)
+            if url_components.netloc:
+                if ':' not in url_components.netloc:
+                    proxy = url_components._replace(
+                        netloc='%s:%d' % (url_components.netloc, default_port)
+                    ).geturl()
+            else:
+                if ':' not in proxy:
+                    proxy = '%s:%d' % (proxy, default_port)
+        else:
+            raise ValueError('Malformed PAC: unknown proxy type %s' % proxy_type)
+
+        return proxy
+
     def proxy_open(self, req, proxy, type):
+        if self.uses_pac:
+            proxy_directives = pacparser.find_proxy(req.get_full_url())
+            proxy = self._parse_pac_result(proxy_directives)
+
         req_proxy = req.headers.get('Ytdl-request-proxy')
         if req_proxy is not None:
             proxy = req_proxy

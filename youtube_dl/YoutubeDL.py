@@ -2014,6 +2014,7 @@ class YoutubeDL(object):
 
         opts_cookiefile = self.params.get('cookiefile')
         opts_proxy = self.params.get('proxy')
+        opts_pac_url = self.params.get('pac_url')
 
         if opts_cookiefile is None:
             self.cookiejar = compat_cookiejar.CookieJar()
@@ -2034,7 +2035,13 @@ class YoutubeDL(object):
             # Set HTTPS proxy to HTTP one if given (https://github.com/rg3/youtube-dl/issues/805)
             if 'http' in proxies and 'https' not in proxies:
                 proxies['https'] = proxies['http']
-        proxy_handler = PerRequestProxyHandler(proxies)
+        pac_data = None
+        if opts_pac_url is not None:
+            # XXX Are PACs always in UTF-8?
+            # Not using self.urlopen() here as the opener is not set yet.
+            # XXX Is it safe? (file:/// attacks, etc.)
+            pac_data = compat_urllib_request.urlopen(opts_pac_url).read().decode('utf-8')
+        proxy_handler = PerRequestProxyHandler(proxies, pac_data)
 
         debuglevel = 1 if self.params.get('debug_printtraffic') else 0
         https_handler = make_HTTPS_handler(self.params, debuglevel=debuglevel)
