@@ -8,7 +8,8 @@ python:
   - "3.5"
   - "3.6"
 sudo: false
-script: nosetests test --verbose
+install: pip install nose-timer
+script: nosetests test --verbose --with-timer --timer-top-n 10
 notifications:
   email:
     - filippo.valsorda@gmail.com
