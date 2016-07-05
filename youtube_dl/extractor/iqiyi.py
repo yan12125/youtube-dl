@@ -240,13 +240,16 @@ class IqiyiIE(InfoExtractor):
         if not username:
             return True
 
+        return self._try_login(username, password)
+
+    def _try_login(self, username, password, piccode=None):
         data = self._download_json(
             'http://kylin.iqiyi.com/get_token', None,
             note='Get token for logging', errnote='Unable to get token for logging')
         sdk = data['sdk']
         timestamp = int(time.time())
-        target = '/apis/reglogin/login.action?lang=zh_TW&area_code=null&email=%s&passwd=%s&agenttype=1&from=undefined&keeplogin=0&piccode=&fromurl=&_pos=1' % (
-            username, self._rsa_fun(password.encode('utf-8')))
+        target = '/apis/reglogin/login.action?lang=zh_TW&area_code=null&email=%s&passwd=%s&agenttype=1&from=undefined&keeplogin=0&piccode=%s&fromurl=&_pos=1' % (
+            username, self._rsa_fun(password.encode('utf-8')), piccode or '')
 
         interp = IqiyiSDKInterpreter(sdk)
         sign = interp.run(target, data['ip'], timestamp)
@@ -264,12 +267,18 @@ class IqiyiIE(InfoExtractor):
             note='Validate credentials', errnote='Unable to validate credentials')
 
         MSG_MAP = {
-            'P00107': 'please login via the web interface and enter the CAPTCHA code',
             'P00117': 'bad username or password',
         }
 
         code = validation_result['code']
         if code != 'A00000':
+            if code == 'P00107':
+                # The second one is the real CAPTCHA
+                vcode_url = 'http://passport.iqiyi.com/register/vcode.php'
+                self._request_webpage(vcode_url, None, note=None)
+                piccode = self._ask_captcha_code(vcode_url, None, filename='captcha.gif')
+                return self._try_login(username, password, piccode)
+
             msg = MSG_MAP.get(code)
             if not msg:
                 msg = 'error %s' % code
