@@ -7,6 +7,7 @@ import json
 import netrc
 import os
 import re
+import shutil
 import socket
 import sys
 import time
@@ -33,6 +34,7 @@ from ..utils import (
     clean_html,
     compiled_regex_type,
     determine_ext,
+    encodeFilename,
     error_to_compat_str,
     ExtractorError,
     fix_xml_ampersands,
@@ -703,6 +705,13 @@ class InfoExtractor(object):
             return downloader_params['twofactor']
 
         return compat_getpass('Type %s and press [Return]: ' % note)
+
+    def _ask_captcha_code(self, url_or_request, video_id, note='CAPTCHA code', filename='captcha.jpg'):
+        urlh = self._request_webpage(
+            url_or_request, None, note='Downloading %s' % note)
+        with open(encodeFilename(filename), 'wb') as pic_f:
+            shutil.copyfileobj(urlh, pic_f)
+        return compat_getpass('Type the code in image %s and press [Return]: ' % filename)
 
     # Helper functions for extracting OpenGraph info
     @staticmethod
