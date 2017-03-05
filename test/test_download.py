@@ -26,6 +26,7 @@ import socket
 
 import youtube_dl.YoutubeDL
 from youtube_dl.compat import (
+    compat_getenv,
     compat_http_client,
     compat_urllib_error,
     compat_HTTPError,
@@ -97,7 +98,7 @@ def generator(test_case, tname):
             if not (info_dict.get('id') and info_dict.get('ext')):
                 raise Exception('Test definition incorrect. The output file cannot be known. Are both \'id\' and \'ext\' keys present?')
 
-        if 'skip' in test_case:
+        if 'skip' in test_case and compat_getenv('YTDL_IGNORE_SKIP_TEST') is not None:
             print_skipping(test_case['skip'])
             return
         for other_ie in other_ies:
