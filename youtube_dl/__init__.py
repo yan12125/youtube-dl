@@ -376,6 +376,7 @@ def _real_main(argv=None):
         'verbose': opts.verbose,
         'dump_intermediate_pages': opts.dump_intermediate_pages,
         'write_pages': opts.write_pages,
+        'use_dump_pages': opts.use_dump_pages,
         'test': opts.test,
         'keepvideo': opts.keepvideo,
         'min_filesize': opts.min_filesize,

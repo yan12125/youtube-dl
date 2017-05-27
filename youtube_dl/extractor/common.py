@@ -4,6 +4,7 @@ from __future__ import unicode_literals
 import base64
 import datetime
 import hashlib
+import io
 import json
 import netrc
 import os
@@ -490,6 +491,22 @@ class InfoExtractor(object):
                 self.to_screen('%s' % (note,))
             else:
                 self.to_screen('%s: %s' % (video_id, note))
+        # XXX: In _webpage_read_content, the dump filename is determined by the
+        # original url_or_request, not the complete url combined with query
+        # strings, so I call check dump files here.
+        if self._downloader.params.get('use_dump_pages', False):
+            filename = self._dump_filename(url_or_request, video_id)
+            try:
+                # Close the file as soon as we don't need it, so using a BytesIO wrapper
+                with open(filename, 'rb') as f:
+                    data = f.read()
+                self.to_screen('Using dumped file %s' % filename)
+                return compat_urllib_request.addinfourl(
+                    io.BytesIO(data), headers={},
+                    url=self._get_url_from_url_or_request(url_or_request), code=200)
+            except (IOError, OSError):
+                pass
+            self.to_screen('Dump file %s missing or unreadable, skipping' % filename)
         if isinstance(url_or_request, compat_urllib_request.Request):
             url_or_request = update_Request(
                 url_or_request, data=data, headers=headers, query=query)
@@ -580,6 +597,24 @@ class InfoExtractor(object):
                 'Visit http://blocklist.rkn.gov.ru/ for a block reason.',
                 expected=True)
 
+    @staticmethod
+    def _get_url_from_url_or_request(url_or_request):
+        try:
+            url = url_or_request.get_full_url()
+        except AttributeError:
+            url = url_or_request
+        return url
+
+    @classmethod
+    def _dump_filename(cls, url_or_request, video_id):
+        url = cls._get_url_from_url_or_request(url_or_request)
+        basen = '%s_%s' % (video_id, url)
+        if len(basen) > 240:
+            h = '___' + hashlib.md5(basen.encode('utf-8')).hexdigest()
+            basen = basen[:240 - len(h)] + h
+        raw_filename = basen + '.dump'
+        return sanitize_filename(raw_filename, restricted=True)
+
     def _webpage_read_content(self, urlh, url_or_request, video_id, note=None, errnote=None, fatal=True, prefix=None, encoding=None):
         content_type = urlh.headers.get('Content-Type', '')
         webpage_bytes = urlh.read()
@@ -588,24 +623,12 @@ class InfoExtractor(object):
         if not encoding:
             encoding = self._guess_encoding_from_content(content_type, webpage_bytes)
         if self._downloader.params.get('dump_intermediate_pages', False):
-            try:
-                url = url_or_request.get_full_url()
-            except AttributeError:
-                url = url_or_request
+            url = self._get_url_from_url_or_request(url_or_request)
             self.to_screen('Dumping request to ' + url)
             dump = base64.b64encode(webpage_bytes).decode('ascii')
             self._downloader.to_screen(dump)
-        if self._downloader.params.get('write_pages', False):
-            try:
-                url = url_or_request.get_full_url()
-            except AttributeError:
-                url = url_or_request
-            basen = '%s_%s' % (video_id, url)
-            if len(basen) > 240:
-                h = '___' + hashlib.md5(basen.encode('utf-8')).hexdigest()
-                basen = basen[:240 - len(h)] + h
-            raw_filename = basen + '.dump'
-            filename = sanitize_filename(raw_filename, restricted=True)
+        if self._downloader.params.get('write_pages', False) and not self._downloader.params.get('use_dump_pages', False):
+            filename = self._dump_filename(url_or_request, video_id)
             self.to_screen('Saving request to ' + filename)
             # Working around MAX_PATH limitation on Windows (see
             # http://msdn.microsoft.com/en-us/library/windows/desktop/aa365247(v=vs.85).aspx)
