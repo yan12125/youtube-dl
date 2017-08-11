@@ -57,6 +57,7 @@ class YoutubeBaseInfoExtractor(InfoExtractor):
     _LOOKUP_URL = 'https://accounts.google.com/_/signin/sl/lookup'
     _CHALLENGE_URL = 'https://accounts.google.com/_/signin/sl/challenge'
     _TFA_URL = 'https://accounts.google.com/_/signin/challenge?hl=en&TL={0}'
+    _PROMPT_TX_URL = 'https://content.googleapis.com/cryptauth/v1/authzen/awaittx'
 
     _NETRC_MACHINE = 'youtube'
     # If True it will raise an error if no login info is provided
@@ -186,6 +187,24 @@ class YoutubeBaseInfoExtractor(InfoExtractor):
                 if status == 'QUOTA_EXCEEDED':
                     warn('Exceeded the limit of TFA codes, try later')
                     return False
+
+                google_prompt_info = try_get(tfa, lambda x: x[-1], dict)
+                if google_prompt_info:
+                    print(google_prompt_info)
+                    if '5004' in google_prompt_info:
+                        google_prompt_info = google_prompt_info['5004']
+                        api_key = try_get(google_prompt_info, lambda x: x[12], compat_str)
+                        tx_id = try_get(google_prompt_info, lambda x: x[1], compat_str)
+                        tx_response = self._download_json(
+                            self._PROMPT_TX_URL, None,
+                            note='Awaiting for Google Prompt confirmation',
+                            query={'alt': 'json', 'key': api_key},
+                            headers={
+                                'Content-Type': 'application/json',
+                                'Referer': 'https://accounts.google.com/signin/v2/challenge/az',
+                            },
+                            data=json.dumps({'txId': tx_id}).encode('utf-8'))
+                        print(tx_response)
 
                 tl = try_get(challenge_results, lambda x: x[1][2], compat_str)
                 if not tl:
