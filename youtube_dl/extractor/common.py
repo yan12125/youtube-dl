@@ -20,6 +20,7 @@ from ..compat import (
     compat_etree_fromstring,
     compat_getpass,
     compat_http_client,
+    compat_HTTPError,
     compat_os_name,
     compat_str,
     compat_urllib_error,
@@ -501,7 +502,7 @@ class InfoExtractor(object):
                 url_or_request = sanitized_Request(url_or_request, data, headers)
         try:
             return self._downloader.urlopen(url_or_request)
-        except (compat_urllib_error.URLError, compat_http_client.HTTPException, socket.error) as err:
+        except (compat_urllib_error.URLError, compat_http_client.HTTPException, compat_HTTPError, socket.error) as err:
             if errnote is False:
                 return False
             if errnote is None:

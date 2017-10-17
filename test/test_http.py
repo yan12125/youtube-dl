@@ -10,6 +10,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from youtube_dl import YoutubeDL
 from youtube_dl.compat import compat_http_server, compat_urllib_request
+import io
+import gzip
 import ssl
 import threading
 
@@ -56,6 +58,18 @@ class HTTPTestRequestHandler(compat_http_server.BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.end_headers()
             self.wfile.write(b'<html><video src="/vid.mp4" /></html>')
+        elif self.path == '/trailing_garbage':
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Encoding', 'gzip')
+            self.end_headers()
+
+            buf = io.BytesIO()
+            with gzip.GzipFile(fileobj=buf, mode='wb') as f:
+                f.write(b'<html><video src="/vid.mp4" /></html>')
+            compressed = buf.getvalue()
+
+            self.wfile.write(compressed + b'garbage')
         else:
             assert False
 
@@ -87,6 +101,11 @@ class TestHTTP(unittest.TestCase):
 
         ydl = YoutubeDL({'logger': FakeLogger()})
         r = ydl.extract_info('http://localhost:%d/302' % self.port)
+        self.assertEqual(r['entries'][0]['url'], 'http://localhost:%d/vid.mp4' % self.port)
+
+    def test_trailing_garbage_in_gzipped_content(self):
+        ydl = YoutubeDL({'logger': FakeLogger()})
+        r = ydl.extract_info('http://localhost:%d/trailing_garbage' % self.port)
         self.assertEqual(r['entries'][0]['url'], 'http://localhost:%d/vid.mp4' % self.port)
 
 

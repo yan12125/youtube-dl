@@ -28,6 +28,8 @@ import random
 
 from string import ascii_letters
 
+import requests
+
 from .compat import (
     compat_basestring,
     compat_cookiejar,
@@ -349,6 +351,8 @@ class YoutubeDL(object):
         }
         self.params.update(params)
         self.cache = Cache(self)
+
+        self.session = requests.Session()
 
         def check_deprecated(param, option, suggestion):
             if self.params.get(param) is not None:
@@ -2192,7 +2196,24 @@ class YoutubeDL(object):
         """ Start an HTTP download """
         if isinstance(req, compat_basestring):
             req = sanitized_Request(req)
-        return self._opener.open(req, timeout=self._socket_timeout)
+
+        def force_decode_content(resp, *args, **kwargs):
+            # For some reason [1] content decoding is disabled by default. Let's
+            # force it. It can handle trailing garbages in gzipped contents just
+            # like YoutubeDL.http_response
+            # [1] https://github.com/requests/requests/commit/91ac5ba110e1d85544af3edaa375837db861e426
+            resp.raw.decode_content = True
+            return resp
+
+        resp = self.session.request(
+            req.get_method(), req.get_full_url(), headers=req.headers, data=req.data,
+            stream=True, hooks=dict(response=force_decode_content))
+        resp.raise_for_status()
+        # "patch" the response object so that it has the same API as compat_http_client.HTTPResponse
+        resp.geturl = lambda: resp.url
+        resp.info = lambda: resp.headers
+        resp.read = resp.raw.read
+        return resp
 
     def print_debug_header(self):
         if not self.params.get('verbose'):
